@@ -29,8 +29,10 @@ public class RiskCheckRequestedConsumer {
             log.info("[RISK] Mensagem recebida. orderId={} correlationId={}",
                     event.getOrderId(), event.getCorrelationId());
             useCase.execute(event);
+
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             log.error("[RISK] Payload inválido, descartando mensagem. payload={}", payload, e);
+
         } catch (Exception e) {
             UUID orderId = event != null ? event.getOrderId() : null;
             log.error("[RISK] Falha ao processar mensagem. orderId={}", orderId, e);

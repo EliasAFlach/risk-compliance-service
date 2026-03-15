@@ -1,18 +1,30 @@
-version: "3.8"
+version: '3.8'
 
 services:
-  risk-postgres:
-    image: postgres:15-alpine
-    container_name: invest-risk-postgres
-    ports:
-      - "5433:5432"
+
+  risk-db:
+    image: postgres:15
+    container_name: risk-db
     environment:
-      - POSTGRES_DB=invest_risk_db
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=admin
+      POSTGRES_DB: risk_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5435:5432"
     volumes:
-      - risk_postgres_data:/var/lib/postgresql/data
-      - ./db/init:/docker-entrypoint-initdb.d
+      - risk-db-data:/var/lib/postgresql/data
+      - ./init/risk-db.sql:/docker-entrypoint-initdb.d/risk-db.sql
+    networks:
+      - invest-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d risk_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
-  risk_postgres_data:
+  risk-db-data:
+
+networks:
+  invest-network:
+    external: true
