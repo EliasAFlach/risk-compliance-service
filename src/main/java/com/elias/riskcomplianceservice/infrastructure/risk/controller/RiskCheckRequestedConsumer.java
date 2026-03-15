@@ -8,6 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
 
+import java.util.UUID;
+
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -21,12 +23,18 @@ public class RiskCheckRequestedConsumer {
             groupId = "${spring.kafka.consumer.group-id}"
     )
     public void onMessage(String payload) {
+        RiskCheckRequestedEvent event = null;
         try {
-            RiskCheckRequestedEvent event = objectMapper.readValue(payload, RiskCheckRequestedEvent.class);
-            log.info("[RISK] Received request. orderId={} correlationId={}", event.getOrderId(), event.getCorrelationId());
+            event = objectMapper.readValue(payload, RiskCheckRequestedEvent.class);
+            log.info("[RISK] Mensagem recebida. orderId={} correlationId={}",
+                    event.getOrderId(), event.getCorrelationId());
             useCase.execute(event);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            log.error("[RISK] Payload inválido, descartando mensagem. payload={}", payload, e);
         } catch (Exception e) {
-            log.error("[RISK] Failed to process message", e);
+            UUID orderId = event != null ? event.getOrderId() : null;
+            log.error("[RISK] Falha ao processar mensagem. orderId={}", orderId, e);
+            throw new RuntimeException("Falha ao processar RiskCheckRequestedEvent. orderId=" + orderId, e);
         }
     }
 }

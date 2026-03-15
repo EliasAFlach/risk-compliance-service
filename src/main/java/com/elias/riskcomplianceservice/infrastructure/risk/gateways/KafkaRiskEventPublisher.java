@@ -1,18 +1,17 @@
 package com.elias.riskcomplianceservice.infrastructure.risk.gateways;
 
-import com.elias.investcommon.domain.RiskDecisionType;
-import com.elias.investcommon.event.risk.*;
-import com.elias.investcommon.event.risk.OrderRiskApprovedEvent;
-import com.elias.investcommon.event.risk.OrderRiskRejectedEvent;
-import com.elias.investcommon.event.risk.OrderRiskReviewEvent;
+import com.elias.investcommon.event.risk.OrderRiskDecisionEvent;
+import com.elias.investcommon.event.risk.RiskCheckRequestedEvent;
+import com.elias.investcommon.event.risk.RuleTraceDTO;
 import com.elias.riskcomplianceservice.application.risk.gateways.RiskEventPublisherGateway;
 import com.elias.riskcomplianceservice.domain.risk.RiskDecision;
 import com.elias.riskcomplianceservice.domain.risk.RuleTrace;
+import com.elias.riskcomplianceservice.infrastructure.outbox.persistence.RiskOutboxEntity;
+import com.elias.riskcomplianceservice.infrastructure.outbox.persistence.SpringDataRiskOutboxRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -24,7 +23,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class KafkaRiskEventPublisher implements RiskEventPublisherGateway {
 
-    private final KafkaTemplate<String, String> kafkaTemplate;
+    private final SpringDataRiskOutboxRepository outboxRepository;
     private final ObjectMapper objectMapper;
 
     @Value("${app.kafka.topics.risk-approved}")
@@ -38,68 +37,46 @@ public class KafkaRiskEventPublisher implements RiskEventPublisherGateway {
 
     @Override
     public void publishDecision(RiskCheckRequestedEvent input, RiskDecision decision, UUID correlationId) {
+        String topic = resolveTopic(decision.decision());
+
+        OrderRiskDecisionEvent event = OrderRiskDecisionEvent.builder()
+                .eventId(UUID.randomUUID())
+                .occurredOn(Instant.now())
+                .schemaVersion("1")
+                .correlationId(correlationId)
+                .causationId(input.getEventId())
+                .orderId(input.getOrderId())
+                .investorId(input.getInvestorId())
+                .decision(decision.decision())
+                .reasons(decision.reasons())
+                .ruleTrace(toDto(decision.ruleTrace()))
+                .build();
+
+        saveToOutbox(topic, input.getOrderId(), event);
+
+        log.info("[OUTBOX] Decisão de risco salva. orderId={} decision={} correlationId={}",
+                input.getOrderId(), decision.decision(), correlationId);
+    }
+
+    private String resolveTopic(com.elias.investcommon.domain.RiskDecisionType decision) {
+        return switch (decision) {
+            case APPROVED -> approvedTopic;
+            case REJECTED -> rejectedTopic;
+            case REVIEW   -> reviewTopic;
+        };
+    }
+
+    private void saveToOutbox(String topic, UUID eventKey, Object event) {
         try {
-            String key = input.getOrderId().toString();
-
-            if (decision.decision() == RiskDecisionType.APPROVED) {
-                OrderRiskApprovedEvent ev = OrderRiskApprovedEvent.builder()
-                        .eventId(UUID.randomUUID())
-                        .occurredOn(Instant.now())
-                        .schemaVersion("1")
-                        .correlationId(correlationId)
-                        .causationId(input.getEventId())
-                        .orderId(input.getOrderId())
-                        .investorId(input.getInvestorId())
-                        .decision(RiskDecisionType.APPROVED)
-                        .reasons(decision.reasons())
-                        .ruleTrace(toDto(decision.ruleTrace()))
-                        .build();
-
-                kafkaTemplate.send(approvedTopic, key, objectMapper.writeValueAsString(ev));
-                log.info("[RISK] Published APPROVED. orderId={} correlationId={}", input.getOrderId(), correlationId);
-                return;
-            }
-
-            if (decision.decision() == RiskDecisionType.REJECTED) {
-                OrderRiskRejectedEvent ev = OrderRiskRejectedEvent.builder()
-                        .eventId(UUID.randomUUID())
-                        .occurredOn(Instant.now())
-                        .schemaVersion("1")
-                        .correlationId(correlationId)
-                        .causationId(input.getEventId())
-                        .orderId(input.getOrderId())
-                        .investorId(input.getInvestorId())
-                        .decision(RiskDecisionType.REJECTED)
-                        .reasons(decision.reasons())
-                        .ruleTrace(toDto(decision.ruleTrace()))
-                        .build();
-
-                kafkaTemplate.send(rejectedTopic, key, objectMapper.writeValueAsString(ev));
-                log.info("[RISK] Published REJECTED. orderId={} correlationId={}", input.getOrderId(), correlationId);
-                return;
-            }
-
-            // REVIEW
-            OrderRiskReviewEvent ev = OrderRiskReviewEvent.builder()
-                    .eventId(UUID.randomUUID())
-                    .occurredOn(Instant.now())
-                    .schemaVersion("1")
-                    .correlationId(correlationId)
-                    .causationId(input.getEventId())
-                    .orderId(input.getOrderId())
-                    .investorId(input.getInvestorId())
-                    .decision(RiskDecisionType.REVIEW)
-                    .reasons(decision.reasons())
-                    .ruleTrace(toDto(decision.ruleTrace()))
-                    .build();
-
-            kafkaTemplate.send(reviewTopic, key, objectMapper.writeValueAsString(ev));
-            log.info("[RISK] Published REVIEW. orderId={} correlationId={}", input.getOrderId(), correlationId);
-
+            RiskOutboxEntity outbox = new RiskOutboxEntity();
+            outbox.setTopic(topic);
+            outbox.setEventKey(eventKey.toString());
+            outbox.setPayload(objectMapper.writeValueAsString(event));
+            outbox.setCreatedAt(Instant.now());
+            outboxRepository.save(outbox);
         } catch (Exception e) {
-            // Sem outbox: falhou publicar. Ainda assim você tem audit no banco.
-            log.error("[RISK] Failed to publish decision event. orderId={}", input.getOrderId(), e);
-            throw new RuntimeException("Failed to publish risk decision event", e);
+            log.error("[OUTBOX] Falha ao salvar decisão de risco no outbox. topic={} eventKey={}", topic, eventKey, e);
+            throw new RuntimeException("Erro ao salvar evento de risco no Outbox. topic=" + topic, e);
         }
     }
 

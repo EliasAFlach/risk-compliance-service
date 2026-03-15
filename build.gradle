@@ -27,7 +27,7 @@ dependencies {
     implementation 'com.fasterxml.jackson.core:jackson-databind'
     implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310'
 
-    implementation 'com.elias.invest:invest-common:0.0.6-SNAPSHOT'
+    implementation 'com.elias.invest:invest-common:0.0.7-SNAPSHOT'
 
     runtimeOnly 'org.postgresql:postgresql'
 
